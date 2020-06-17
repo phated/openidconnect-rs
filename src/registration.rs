@@ -4,22 +4,18 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use failure::Fail;
-#[cfg(feature = "futures-01")]
-use futures_0_1::{Future, IntoFuture};
-#[cfg(feature = "futures-03")]
-use futures_0_3;
-use http::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE};
-use http::method::Method;
-use http::status::StatusCode;
+use futures::Future;
 use serde;
 use serde::de::{Deserialize, DeserializeOwned, Deserializer, MapAccess, Visitor};
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 use serde_json;
 
-use super::http_utils::{auth_bearer, check_content_type, MIME_TYPE_JSON};
-use super::types::helpers::{serde_utc_seconds_opt, split_language_tag_key};
-use super::types::{
+use crate::http_types::headers::{ACCEPT, CONTENT_TYPE};
+use crate::http_types::{Body, Method, Request, Response, StatusCode};
+use crate::http_utils::{auth_bearer, check_content_type, MIME_TYPE_JSON};
+use crate::types::helpers::{serde_utc_seconds_opt, split_language_tag_key};
+use crate::types::{
     ApplicationType, AuthenticationContextClass, ClientAuthMethod, ClientConfigUrl,
     ClientContactEmail, ClientName, ClientUrl, GrantType, InitiateLoginUrl, JsonWebKeySetUrl,
     JsonWebKeyType, JsonWebKeyUse, JweContentEncryptionAlgorithm, JweKeyManagementAlgorithm,
@@ -27,9 +23,9 @@ use super::types::{
     RegistrationUrl, RequestUrl, ResponseType, ResponseTypes, SectorIdentifierUrl,
     SubjectIdentifierType, ToSUrl,
 };
-use super::{
-    AccessToken, ClientId, ClientSecret, ErrorResponseType, HttpRequest, HttpResponse, JsonWebKey,
-    JsonWebKeySet, RedirectUrl, StandardErrorResponse,
+use crate::{
+    AccessToken, ClientId, ClientSecret, ErrorResponseType, JsonWebKey, JsonWebKeySet, RedirectUrl,
+    StandardErrorResponse,
 };
 
 ///
@@ -459,59 +455,9 @@ where
     }
 
     ///
-    /// Submits this request to the specified registration endpoint using the specified synchronous
-    /// HTTP client.
-    ///
-    pub fn register<HC, RE>(
-        &self,
-        registration_endpoint: &RegistrationUrl,
-        http_client: HC,
-    ) -> Result<
-        ClientRegistrationResponse<AC, AR, AT, CA, G, JE, JK, JS, JT, JU, K, RT, S>,
-        ClientRegistrationError<ET, RE>,
-    >
-    where
-        HC: FnOnce(HttpRequest) -> Result<HttpResponse, RE>,
-        RE: Fail,
-    {
-        self.prepare_registration(registration_endpoint)
-            .and_then(|http_request| {
-                http_client(http_request).map_err(ClientRegistrationError::Request)
-            })
-            .and_then(Self::register_response)
-    }
-
-    ///
     /// Submits this request to the specified registration endpoint using the specified asynchronous
     /// HTTP client.
     ///
-    #[cfg(feature = "futures-01")]
-    pub fn register_future<F, HC, RE>(
-        &self,
-        registration_endpoint: &RegistrationUrl,
-        http_client: HC,
-    ) -> impl Future<
-        Item = ClientRegistrationResponse<AC, AR, AT, CA, G, JE, JK, JS, JT, JU, K, RT, S>,
-        Error = ClientRegistrationError<ET, RE>,
-    >
-    where
-        F: Future<Item = HttpResponse, Error = RE>,
-        HC: FnOnce(HttpRequest) -> F,
-        RE: Fail,
-    {
-        self.prepare_registration(registration_endpoint)
-            .into_future()
-            .and_then(|http_request| {
-                http_client(http_request).map_err(ClientRegistrationError::Request)
-            })
-            .and_then(|http_response| Self::register_response(http_response).into_future())
-    }
-
-    ///
-    /// Submits this request to the specified registration endpoint using the specified asynchronous
-    /// HTTP client.
-    ///
-    #[cfg(feature = "futures-03")]
     pub async fn register_async<F, HC, RE>(
         &self,
         registration_endpoint: &RegistrationUrl,
@@ -521,21 +467,21 @@ where
         ClientRegistrationError<ET, RE>,
     >
     where
-        F: futures_0_3::Future<Output = Result<HttpResponse, RE>>,
-        HC: FnOnce(HttpRequest) -> F,
+        F: Future<Output = Result<Response, RE>>,
+        HC: FnOnce(Request) -> F,
         RE: Fail,
     {
         let http_request = self.prepare_registration(registration_endpoint)?;
         let http_response = http_client(http_request)
             .await
             .map_err(ClientRegistrationError::Request)?;
-        Self::register_response(http_response)
+        Self::register_response(http_response).await
     }
 
     fn prepare_registration<RE>(
         &self,
         registration_endpoint: &RegistrationUrl,
-    ) -> Result<HttpRequest, ClientRegistrationError<ET, RE>>
+    ) -> Result<Request, ClientRegistrationError<ET, RE>>
     where
         RE: Fail,
     {
@@ -549,23 +495,20 @@ where
             None
         };
 
-        let mut headers = HeaderMap::new();
-        headers.append(ACCEPT, HeaderValue::from_static(MIME_TYPE_JSON));
-        headers.append(CONTENT_TYPE, HeaderValue::from_static(MIME_TYPE_JSON));
+        let mut req = Request::new(Method::Get, registration_endpoint.url().clone());
+        req.set_body(request_json);
+
+        req.append_header(ACCEPT, MIME_TYPE_JSON);
+        req.append_header(CONTENT_TYPE, MIME_TYPE_JSON);
         if let Some((header, value)) = auth_header_opt {
-            headers.append(header, value);
+            req.append_header(header, value);
         }
 
-        Ok(HttpRequest {
-            url: registration_endpoint.url().clone(),
-            method: Method::POST,
-            headers,
-            body: request_json,
-        })
+        Ok(req)
     }
 
-    fn register_response<RE>(
-        http_response: HttpResponse,
+    async fn register_response<RE>(
+        mut http_response: Response,
     ) -> Result<
         ClientRegistrationResponse<AC, AR, AT, CA, G, JE, JK, JS, JT, JU, K, RT, S>,
         ClientRegistrationError<ET, RE>,
@@ -580,32 +523,32 @@ where
         // Spec says that a successful response SHOULD use 201 Created, and a registration error
         // condition returns (no "SHOULD") 400 Bad Request. For now, only accept these two status
         // codes. We may need to relax the success status to improve interoperability.
-        if http_response.status_code != StatusCode::CREATED
-            && http_response.status_code != StatusCode::BAD_REQUEST
+        if http_response.status() != StatusCode::Created
+            && http_response.status() != StatusCode::BadRequest
         {
             return Err(ClientRegistrationError::Response(
-                http_response.status_code,
-                http_response.body,
+                http_response.status(),
+                http_response.take_body(),
                 "unexpected HTTP status code".to_string(),
             ));
         }
 
-        check_content_type(&http_response.headers, MIME_TYPE_JSON).map_err(|err_msg| {
+        check_content_type(&http_response, MIME_TYPE_JSON).map_err(|err_msg| {
             ClientRegistrationError::Response(
-                http_response.status_code,
-                http_response.body.clone(),
+                http_response.status(),
+                http_response.take_body(),
                 err_msg,
             )
         })?;
 
-        let response_body = String::from_utf8(http_response.body).map_err(|parse_error| {
+        let response_body = http_response.body_string().await.map_err(|parse_error| {
             ClientRegistrationError::Other(format!(
                 "couldn't parse response as UTF-8: {}",
                 parse_error
             ))
         })?;
 
-        if http_response.status_code == StatusCode::BAD_REQUEST {
+        if http_response.status() == StatusCode::BadRequest {
             let response_error: StandardErrorResponse<ET> =
                 serde_json::from_str(&response_body).map_err(ClientRegistrationError::Parse)?;
             return Err(ClientRegistrationError::ServerResponse(response_error));
@@ -910,7 +853,7 @@ where
     /// Server returned an invalid response.
     ///
     #[fail(display = "Server returned invalid response: {}", _2)]
-    Response(StatusCode, Vec<u8>, String),
+    Response(StatusCode, Body, String),
     ///
     /// Failed to serialize client metadata.
     ///

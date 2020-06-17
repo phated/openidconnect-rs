@@ -2,28 +2,24 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 use failure::Fail;
-#[cfg(feature = "futures-01")]
-use futures_0_1::{Future, IntoFuture};
-#[cfg(feature = "futures-03")]
-use futures_0_3;
-use http::header::{HeaderValue, ACCEPT};
-use http::method::Method;
-use http::status::StatusCode;
+use futures::Future;
 use oauth2::{AuthUrl, Scope, TokenUrl};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json;
 use url;
 
-use super::http_utils::{check_content_type, MIME_TYPE_JSON};
-use super::types::{
+use crate::http_types::headers::ACCEPT;
+use crate::http_types::{Body, Method, Request, Response, StatusCode};
+use crate::http_utils::{check_content_type, MIME_TYPE_JSON};
+use crate::types::{
     AuthDisplay, AuthenticationContextClass, ClaimName, ClaimType, ClientAuthMethod, GrantType,
     IssuerUrl, JsonWebKey, JsonWebKeySet, JsonWebKeySetUrl, JsonWebKeyType, JsonWebKeyUse,
     JweContentEncryptionAlgorithm, JweKeyManagementAlgorithm, JwsSigningAlgorithm, LanguageTag,
     OpPolicyUrl, OpTosUrl, RegistrationUrl, ResponseMode, ResponseType, ResponseTypes,
     ServiceDocUrl, SubjectIdentifierType,
 };
-use super::{HttpRequest, HttpResponse, UserInfoUrl, CONFIG_URL_SUFFIX};
+use crate::{UserInfoUrl, CONFIG_URL_SUFFIX};
 
 ///
 /// Trait for adding extra fields to [`ProviderMetadata`].
@@ -311,92 +307,26 @@ where
     ];
 
     ///
-    /// Fetches the OpenID Connect Discovery document and associated JSON Web Key Set from the
-    /// OpenID Connect Provider.
-    ///
-    pub fn discover<HC, RE>(
-        issuer_url: &IssuerUrl,
-        http_client: HC,
-    ) -> Result<Self, DiscoveryError<RE>>
-    where
-        HC: Fn(HttpRequest) -> Result<HttpResponse, RE>,
-        RE: Fail,
-    {
-        let discovery_url = issuer_url
-            .join(CONFIG_URL_SUFFIX)
-            .map_err(DiscoveryError::UrlParse)?;
-
-        http_client(Self::discovery_request(discovery_url))
-            .map_err(DiscoveryError::Request)
-            .and_then(|http_response| Self::discovery_response(issuer_url, http_response))
-            .and_then(|provider_metadata| {
-                JsonWebKeySet::fetch(provider_metadata.jwks_uri(), http_client).map(|jwks| Self {
-                    jwks,
-                    ..provider_metadata
-                })
-            })
-    }
-
-    ///
     /// Asynchronously fetches the OpenID Connect Discovery document and associated JSON Web Key Set
     /// from the OpenID Connect Provider.
     ///
-    #[cfg(feature = "futures-01")]
-    pub fn discover_future<F, HC, RE>(
-        issuer_url: IssuerUrl,
-        http_client: HC,
-    ) -> impl Future<Item = Self, Error = DiscoveryError<RE>>
-    where
-        F: Future<Item = HttpResponse, Error = RE>,
-        HC: Fn(HttpRequest) -> F + 'static,
-        RE: Fail,
-    {
-        issuer_url
-            .join(CONFIG_URL_SUFFIX)
-            .map_err(DiscoveryError::UrlParse)
-            .into_future()
-            .and_then(move |discovery_url| {
-                http_client(Self::discovery_request(discovery_url))
-                    .map_err(DiscoveryError::Request)
-                    .map(|http_response| (http_response, http_client))
-            })
-            .and_then(move |(http_response, http_client)| {
-                Self::discovery_response(&issuer_url, http_response)
-                    .into_future()
-                    .map(|provider_metadata| (provider_metadata, http_client))
-            })
-            .and_then(|(provider_metadata, http_client)| {
-                JsonWebKeySet::fetch_future(provider_metadata.jwks_uri(), http_client).map(|jwks| {
-                    Self {
-                        jwks,
-                        ..provider_metadata
-                    }
-                })
-            })
-    }
-
-    ///
-    /// Asynchronously fetches the OpenID Connect Discovery document and associated JSON Web Key Set
-    /// from the OpenID Connect Provider.
-    ///
-    #[cfg(feature = "futures-03")]
     pub async fn discover_async<F, HC, RE>(
         issuer_url: IssuerUrl,
         http_client: HC,
     ) -> Result<Self, DiscoveryError<RE>>
     where
-        F: futures_0_3::Future<Output = Result<HttpResponse, RE>>,
-        HC: Fn(HttpRequest) -> F + 'static,
+        F: Future<Output = Result<Response, RE>>,
+        HC: Fn(Request) -> F + 'static,
         RE: Fail,
     {
         let discovery_url = issuer_url
             .join(CONFIG_URL_SUFFIX)
             .map_err(DiscoveryError::UrlParse)?;
 
-        let provider_metadata = http_client(Self::discovery_request(discovery_url))
-            .await
-            .map_err(DiscoveryError::Request)
-            .and_then(|http_response| Self::discovery_response(&issuer_url, http_response))?;
+        let provider_metadata = match http_client(Self::discovery_request(discovery_url)).await {
+            Err(err) => Err(DiscoveryError::Request(err)),
+            Ok(http_response) => Self::discovery_response(&issuer_url, http_response).await,
+        }?;
 
         JsonWebKeySet::fetch_async(provider_metadata.jwks_uri(), http_client)
             .await
@@ -406,42 +336,43 @@ where
             })
     }
 
-    fn discovery_request(discovery_url: url::Url) -> HttpRequest {
-        HttpRequest {
-            url: discovery_url,
-            method: Method::GET,
-            headers: vec![(ACCEPT, HeaderValue::from_static(MIME_TYPE_JSON))]
-                .into_iter()
-                .collect(),
-            body: Vec::new(),
-        }
+    fn discovery_request(discovery_url: url::Url) -> Request {
+        let mut req = Request::new(Method::Get, discovery_url);
+        req.insert_header(ACCEPT, MIME_TYPE_JSON);
+        req.set_body(Vec::new());
+        req
     }
 
-    fn discovery_response<RE>(
+    async fn discovery_response<RE>(
         issuer_url: &IssuerUrl,
-        discovery_response: HttpResponse,
+        mut discovery_response: Response,
     ) -> Result<Self, DiscoveryError<RE>>
     where
         RE: Fail,
     {
-        if discovery_response.status_code != StatusCode::OK {
+        if discovery_response.status() != StatusCode::Ok {
             return Err(DiscoveryError::Response(
-                discovery_response.status_code,
-                discovery_response.body,
-                format!("HTTP status code {}", discovery_response.status_code),
+                discovery_response.status(),
+                discovery_response.take_body(),
+                format!("HTTP status code {}", discovery_response.status()),
             ));
         }
 
-        check_content_type(&discovery_response.headers, MIME_TYPE_JSON).map_err(|err_msg| {
+        check_content_type(&discovery_response, MIME_TYPE_JSON).map_err(|err_msg| {
             DiscoveryError::Response(
-                discovery_response.status_code,
-                discovery_response.body.clone(),
+                discovery_response.status(),
+                discovery_response.take_body(),
                 err_msg,
             )
         })?;
 
-        let provider_metadata = serde_json::from_slice::<Self>(&discovery_response.body)
-            .map_err(DiscoveryError::Parse)?;
+        let body = match discovery_response.body_bytes().await {
+            Ok(body) => body,
+            Err(_) => return Err(DiscoveryError::Other("Body Error".into())),
+        };
+
+        let provider_metadata =
+            serde_json::from_slice::<Self>(&body).map_err(DiscoveryError::Parse)?;
 
         if provider_metadata.issuer() != issuer_url {
             Err(DiscoveryError::Validation(format!(
@@ -497,7 +428,7 @@ where
     /// Server returned an invalid response.
     ///
     #[fail(display = "Server returned invalid response: {}", _2)]
-    Response(StatusCode, Vec<u8>, String),
+    Response(StatusCode, Body, String),
     ///
     /// Failed to parse discovery URL from issuer URL.
     ///

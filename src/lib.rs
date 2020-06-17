@@ -79,7 +79,7 @@
 //!  * **Custom**
 //!
 //!    In addition to the clients above, users may define their own HTTP clients, which must accept
-//!    an [`HttpRequest`] and return an [`HttpResponse`] or error. Users writing their own clients
+//!    an [`Request`] and return an [`Response`] or error. Users writing their own clients
 //!    may wish to disable the default `reqwest` 0.9 dependency by specifying
 //!    `default-features = false` in `Cargo.toml`:
 //!    ```toml
@@ -88,23 +88,23 @@
 //!
 //!    Synchronous HTTP clients should implement the following trait:
 //!    ```ignore
-//!    FnOnce(HttpRequest) -> Result<HttpResponse, RE>
+//!    FnOnce(Request) -> Result<Response, RE>
 //!    where RE: failure::Fail
 //!    ```
 //!
 //!    Asynchronous `futures` 0.1 HTTP clients should implement the following trait:
 //!    ```ignore
-//!    FnOnce(HttpRequest) -> F
+//!    FnOnce(Request) -> F
 //!    where
-//!      F: Future<Item = HttpResponse, Error = RE>,
+//!      F: Future<Item = Response, Error = RE>,
 //!      RE: failure::Fail
 //!    ```
 //!
 //!    Async/await `futures` 0.3 HTTP clients should implement the following trait:
 //!    ```ignore
-//!    FnOnce(HttpRequest) -> F + Send
+//!    FnOnce(Request) -> F + Send
 //!    where
-//!      F: Future<Output = Result<HttpResponse, RE>> + Send,
+//!      F: Future<Output = Result<Response, RE>> + Send,
 //!      RE: failure::Fail
 //!    ```
 //!
@@ -615,29 +615,17 @@ use std::time::Duration;
 pub use oauth2::{
     AccessToken, AuthType, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CodeTokenRequest,
     CsrfToken, EmptyExtraTokenFields, ErrorResponse, ErrorResponseType, ExtraTokenFields,
-    HttpRequest, HttpResponse, PkceCodeChallenge, PkceCodeChallengeMethod, PkceCodeVerifier,
-    RedirectUrl, RefreshToken, RefreshTokenRequest, RequestTokenError, Scope,
-    StandardErrorResponse, StandardTokenResponse, TokenResponse as OAuth2TokenResponse, TokenType,
-    TokenUrl, ResourceOwnerUsername, ResourceOwnerPassword, PasswordTokenRequest
+    PasswordTokenRequest, PkceCodeChallenge, PkceCodeChallengeMethod, PkceCodeVerifier,
+    RedirectUrl, RefreshToken, RefreshTokenRequest, RequestTokenError, ResourceOwnerPassword,
+    ResourceOwnerUsername, Scope, StandardErrorResponse, StandardTokenResponse,
+    TokenResponse as OAuth2TokenResponse, TokenType, TokenUrl,
 };
 
 ///
 /// Public re-exports of types used for HTTP client interfaces.
 ///
-pub use oauth2::http;
+pub use oauth2::http_types;
 pub use oauth2::url;
-
-#[cfg(feature = "curl")]
-pub use oauth2::curl;
-
-#[cfg(any(feature = "reqwest-09", feature = "reqwest-010"))]
-pub use oauth2::reqwest;
-
-#[cfg(feature = "futures-03")]
-pub use oauth2::{
-    AsyncClientCredentialsTokenRequest, AsyncCodeTokenRequest, AsyncPasswordTokenRequest,
-    AsyncRefreshTokenRequest,
-};
 
 pub use claims::{
     AdditionalClaims, AddressClaim, EmptyAdditionalClaims, GenderClaim, StandardClaims,
@@ -1217,7 +1205,7 @@ where
 
     ///
     /// Overrides the `redirect_url` to the one specified.
-    /// 
+    ///
     pub fn set_redirect_url(mut self, redirect_url: Cow<'a, RedirectUrl>) -> Self {
         self.inner = self.inner.set_redirect_url(redirect_url);
         self
@@ -1340,8 +1328,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
     use std::borrow::Cow;
+    use std::time::Duration;
 
     use oauth2::{AuthUrl, ClientId, ClientSecret, CsrfToken, RedirectUrl, Scope, TokenUrl};
 
@@ -1491,7 +1479,9 @@ mod tests {
             .add_auth_context_value(AuthenticationContextClass::new(
                 "urn:mace:incommon:iap:silver".to_string(),
             ))
-            .set_redirect_url(Cow::Owned(RedirectUrl::new("http://localhost:8888/alternative".to_string()).unwrap()))
+            .set_redirect_url(Cow::Owned(
+                RedirectUrl::new("http://localhost:8888/alternative".to_string()).unwrap(),
+            ))
             .url();
         assert_eq!(
             "https://example/authorize?response_type=code&client_id=aaa&\

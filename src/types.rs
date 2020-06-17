@@ -7,13 +7,7 @@ use std::ops::Deref;
 
 use base64;
 use failure::Fail;
-#[cfg(feature = "futures-01")]
-use futures_0_1::Future;
-#[cfg(feature = "futures-03")]
-use futures_0_3;
-use http::header::{HeaderValue, ACCEPT};
-use http::method::Method;
-use http::status::StatusCode;
+use futures::Future;
 use oauth2;
 use oauth2::helpers::deserialize_space_delimited_vec;
 use rand::{thread_rng, Rng};
@@ -24,11 +18,10 @@ use serde_json;
 use url;
 use url::Url;
 
-use super::http_utils::{check_content_type, MIME_TYPE_JSON, MIME_TYPE_JWKS};
-use super::{
-    AccessToken, AuthorizationCode, DiscoveryError, HttpRequest, HttpResponse,
-    SignatureVerificationError,
-};
+use crate::http_types::headers::ACCEPT;
+use crate::http_types::{Method, Request, Response, StatusCode};
+use crate::http_utils::{check_content_type, MIME_TYPE_JSON, MIME_TYPE_JWKS};
+use crate::{AccessToken, AuthorizationCode, DiscoveryError, SignatureVerificationError};
 
 ///
 /// A [locale-aware](https://openid.net/specs/openid-connect-core-1_0.html#IndividualClaimsLanguages)
@@ -746,97 +739,55 @@ where
     }
 
     ///
-    /// Fetch a remote JSON Web Key Set from the specified `url` using the given `http_client`
-    /// (e.g., [`crate::reqwest::http_client`] or [`crate::curl::http_client`]).
-    ///
-    pub fn fetch<HC, RE>(
-        url: &JsonWebKeySetUrl,
-        http_client: HC,
-    ) -> Result<Self, DiscoveryError<RE>>
-    where
-        HC: FnOnce(HttpRequest) -> Result<HttpResponse, RE>,
-        RE: Fail,
-    {
-        http_client(Self::fetch_request(url))
-            .map_err(DiscoveryError::Request)
-            .and_then(Self::fetch_response)
-    }
-
-    ///
     /// Fetch a remote JSON Web Key Set from the specified `url` using the given async `http_client`
     /// (e.g., [`crate::reqwest::async_http_client`]).
     ///
-    #[cfg(feature = "futures-01")]
-    pub fn fetch_future<F, HC, RE>(
-        url: &JsonWebKeySetUrl,
-        http_client: HC,
-    ) -> impl Future<Item = Self, Error = DiscoveryError<RE>>
-    where
-        F: Future<Item = HttpResponse, Error = RE>,
-        HC: FnOnce(HttpRequest) -> F,
-        RE: Fail,
-    {
-        http_client(Self::fetch_request(url))
-            .map_err(DiscoveryError::Request)
-            .and_then(Self::fetch_response)
-    }
-
-    ///
-    /// Fetch a remote JSON Web Key Set from the specified `url` using the given async `http_client`
-    /// (e.g., [`crate::reqwest::async_http_client`]).
-    ///
-    #[cfg(feature = "futures-03")]
     pub async fn fetch_async<F, HC, RE>(
         url: &JsonWebKeySetUrl,
         http_client: HC,
     ) -> Result<Self, DiscoveryError<RE>>
     where
-        F: futures_0_3::Future<Output = Result<HttpResponse, RE>>,
-        HC: FnOnce(HttpRequest) -> F,
+        F: Future<Output = Result<Response, RE>>,
+        HC: FnOnce(Request) -> F,
         RE: Fail,
     {
-        http_client(Self::fetch_request(url))
-            .await
-            .map_err(DiscoveryError::Request)
-            .and_then(Self::fetch_response)
-    }
-
-    fn fetch_request(url: &JsonWebKeySetUrl) -> HttpRequest {
-        HttpRequest {
-            url: url.url().clone(),
-            method: Method::GET,
-            headers: vec![(ACCEPT, HeaderValue::from_static(MIME_TYPE_JSON))]
-                .into_iter()
-                .collect(),
-            body: Vec::new(),
+        match http_client(Self::fetch_request(url)).await {
+            Err(err) => Err(DiscoveryError::Request(err)),
+            Ok(res) => Self::fetch_response(res).await,
         }
     }
 
-    fn fetch_response<RE>(http_response: HttpResponse) -> Result<Self, DiscoveryError<RE>>
+    fn fetch_request(url: &JsonWebKeySetUrl) -> Request {
+        let mut req = Request::new(Method::Get, url.url().clone());
+        req.set_body(Vec::new());
+        req.insert_header(ACCEPT, MIME_TYPE_JSON);
+        req
+    }
+
+    async fn fetch_response<RE>(mut http_response: Response) -> Result<Self, DiscoveryError<RE>>
     where
         RE: Fail,
     {
-        if http_response.status_code != StatusCode::OK {
+        if http_response.status() != StatusCode::Ok {
             return Err(DiscoveryError::Response(
-                http_response.status_code,
-                http_response.body,
-                format!("HTTP status code {}", http_response.status_code),
+                http_response.status(),
+                http_response.take_body(),
+                format!("HTTP status code {}", http_response.status()),
             ));
         }
 
-        check_content_type(&http_response.headers, MIME_TYPE_JSON)
-            .or_else(|err| {
-                check_content_type(&http_response.headers, MIME_TYPE_JWKS).map_err(|_| err)
-            })
+        check_content_type(&http_response, MIME_TYPE_JSON)
+            .or_else(|err| check_content_type(&http_response, MIME_TYPE_JWKS).map_err(|_| err))
             .map_err(|err_msg| {
-                DiscoveryError::Response(
-                    http_response.status_code,
-                    http_response.body.clone(),
-                    err_msg,
-                )
+                DiscoveryError::Response(http_response.status(), http_response.take_body(), err_msg)
             })?;
 
-        serde_json::from_slice(&http_response.body).map_err(DiscoveryError::Parse)
+        let body = match http_response.body_bytes().await {
+            Err(_) => return Err(DiscoveryError::Other("Body problem".into())),
+            Ok(body) => body,
+        };
+
+        serde_json::from_slice(&body).map_err(DiscoveryError::Parse)
     }
 
     ///
@@ -985,7 +936,7 @@ new_url_type![
 
 ///
 /// Informs the Authorization Server of the desired authorization processing flow, including what
-/// parameters are returned from the endpoints used.  
+/// parameters are returned from the endpoints used.
 ///
 /// See [OAuth 2.0 Multiple Response Type Encoding Practices](
 ///     http://openid.net/specs/oauth-v2-multiple-response-types-1_0.html#ResponseTypesAndModes)

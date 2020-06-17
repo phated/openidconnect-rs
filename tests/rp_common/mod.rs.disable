@@ -14,9 +14,7 @@ use openidconnect::core::{
     CoreApplicationType, CoreClientRegistrationRequest, CoreClientRegistrationResponse,
     CoreProviderMetadata,
 };
-use openidconnect::{
-    ClientContactEmail, ClientName, HttpRequest, HttpResponse, IssuerUrl, RedirectUrl,
-};
+use openidconnect::{ClientContactEmail, ClientName, IssuerUrl, RedirectUrl, Request, Response};
 
 pub const CERTIFICATION_BASE_URL: &str = "https://rp.certification.openid.net:8080";
 pub const RP_CONTACT_EMAIL: &str = "ramos@cs.stanford.edu";
@@ -76,9 +74,7 @@ pub fn init_log(test_id: &'static str) {
     set_test_id(test_id);
 }
 
-pub fn http_client(
-    request: HttpRequest,
-) -> Result<HttpResponse, openidconnect::reqwest::HttpClientError> {
+pub fn http_client(request: Request) -> Result<Response, openidconnect::reqwest::HttpClientError> {
     retry::retry(
         (0..5).map(|i| {
             if i != 0 {

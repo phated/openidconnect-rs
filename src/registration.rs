@@ -458,7 +458,7 @@ where
     /// Submits this request to the specified registration endpoint using the specified asynchronous
     /// HTTP client.
     ///
-    pub async fn register_async<F, HC, RE>(
+    pub async fn register<F, HC, RE>(
         &self,
         registration_endpoint: &RegistrationUrl,
         http_client: HC,

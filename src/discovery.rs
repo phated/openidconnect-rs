@@ -310,7 +310,7 @@ where
     /// Asynchronously fetches the OpenID Connect Discovery document and associated JSON Web Key Set
     /// from the OpenID Connect Provider.
     ///
-    pub async fn discover_async<F, HC, RE>(
+    pub async fn discover<F, HC, RE>(
         issuer_url: IssuerUrl,
         http_client: HC,
     ) -> Result<Self, DiscoveryError<RE>>
@@ -328,7 +328,7 @@ where
             Ok(http_response) => Self::discovery_response(&issuer_url, http_response).await,
         }?;
 
-        JsonWebKeySet::fetch_async(provider_metadata.jwks_uri(), http_client)
+        JsonWebKeySet::fetch(provider_metadata.jwks_uri(), http_client)
             .await
             .map(|jwks| Self {
                 jwks,

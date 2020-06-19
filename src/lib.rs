@@ -510,7 +510,7 @@
 //! # async fn err_wrapper() -> Result<(), failure::Error> {
 //! // Use OpenID Connect Discovery to fetch the provider metadata.
 //! use openidconnect::{OAuth2TokenResponse, TokenResponse};
-//! let provider_metadata = CoreProviderMetadata::discover_async(
+//! let provider_metadata = CoreProviderMetadata::discover(
 //!     IssuerUrl::new("https://accounts.example.com".to_string())?,
 //!     async_http_client,
 //! )
@@ -558,7 +558,7 @@
 //!         .exchange_code(AuthorizationCode::new("some authorization code".to_string()))
 //!         // Set the PKCE code verifier.
 //!         .set_pkce_verifier(pkce_verifier)
-//!         .request_async(async_http_client)
+//!         .request(async_http_client)
 //!         .await?;
 //!
 //! // Extract the ID token claims after verifying its authenticity and nonce.
@@ -803,8 +803,7 @@ where
     ///
     /// Initializes an OpenID Connect client from OpenID Connect Discovery provider metadata.
     ///
-    /// Use [`ProviderMetadata::discover`] or
-    /// [`ProviderMetadata::discover_async`] to fetch the provider metadata.
+    /// Use [`ProviderMetadata::discover`] to fetch the provider metadata.
     ///
     pub fn from_provider_metadata<A, CA, CN, CT, G, JK, RM, RT, S>(
         provider_metadata: ProviderMetadata<A, AD, CA, CN, CT, G, JE, JK, JS, JT, JU, K, RM, RT, S>,
@@ -1007,8 +1006,8 @@ where
     /// To help protect against token substitution attacks, this function optionally allows clients
     /// to provide the subject identifier whose user info they expect to receive. If provided and
     /// the subject returned by the OpenID Connect Provider does not match, the
-    /// [`UserInfoRequest::request`] or [`UserInfoRequest::request_async`] functions will return
-    /// [`UserInfoError::ClaimsVerification`]. If set to `None`, any subject is accepted.
+    /// [`UserInfoRequest::request`] function will return [`UserInfoError::ClaimsVerification`].
+    /// If set to `None`, any subject is accepted.
     ///
     pub fn user_info(
         &self,

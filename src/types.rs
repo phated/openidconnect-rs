@@ -742,7 +742,7 @@ where
     /// Fetch a remote JSON Web Key Set from the specified `url` using the given async `http_client`
     /// (e.g., [`crate::reqwest::async_http_client`]).
     ///
-    pub async fn fetch_async<F, HC, RE>(
+    pub async fn fetch<F, HC, RE>(
         url: &JsonWebKeySetUrl,
         http_client: HC,
     ) -> Result<Self, DiscoveryError<RE>>

@@ -54,7 +54,7 @@ where
     /// Submits this request to the associated user info endpoint using the specified asynchronous
     /// HTTP client.
     ///
-    pub async fn request_async<AC, C, F, GC, RE>(
+    pub async fn request<AC, C, F, GC, RE>(
         self,
         http_client: C,
     ) -> Result<UserInfoClaims<AC, GC>, UserInfoError<RE>>

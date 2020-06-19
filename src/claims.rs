@@ -110,7 +110,7 @@ where
     pub(crate) phone_number: Option<EndUserPhoneNumber>,
     pub(crate) phone_number_verified: Option<bool>,
     pub(crate) address: Option<AddressClaim>,
-    pub(crate) updated_at: Option<DateTime<Utc>>,
+    pub(crate) updated_at: Option<String>,
 }
 impl<GC> StandardClaims<GC>
 where
@@ -183,7 +183,7 @@ where
             set_phone_number -> phone_number[Option<EndUserPhoneNumber>],
             set_phone_number_verified -> phone_number_verified[Option<bool>],
             set_address -> address[Option<AddressClaim>],
-            set_updated_at -> updated_at[Option<DateTime<Utc>>],
+            set_updated_at -> updated_at[Option<String>],
         }
     ];
 }
@@ -266,7 +266,7 @@ where
                         [Option(phone_number)]
                         [Option(phone_number_verified)]
                         [Option(address)]
-                        [Option(DateTime(Seconds(updated_at)))]
+                        [Option(updated_at)]
                     }
                 }
             }
@@ -304,7 +304,7 @@ where
                 [Option(phone_number)]
                 [Option(phone_number_verified)]
                 [Option(address)]
-                [Option(DateTime(Seconds(updated_at)))]
+                [Option(updated_at)]
             }
         }
     }

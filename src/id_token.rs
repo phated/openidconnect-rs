@@ -296,7 +296,7 @@ where
             set_phone_number -> phone_number[Option<EndUserPhoneNumber>],
             set_phone_number_verified -> phone_number_verified[Option<bool>],
             set_address -> address[Option<AddressClaim>],
-            set_updated_at -> updated_at[Option<DateTime<Utc>>],
+            set_updated_at -> updated_at[Option<String>],
         }
     ];
 
@@ -765,7 +765,7 @@ mod tests {
                     postal_code: Some(AddressPostalCode::new("90210".to_string())),
                     country: Some(AddressCountry::new("US".to_string())),
                 }),
-                updated_at: Some(Utc.timestamp(1311283970, 0)),
+                updated_at: Some(Utc.timestamp(1311283970, 0).to_string()),
             },
             EmptyAdditionalClaims {},
         )

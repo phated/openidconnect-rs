@@ -38,3 +38,5 @@ color-backtrace = { version = "0.2" }
 env_logger = "0.5"
 pretty_assertions = "0.5"
 retry = "0.5"
+smol = "0.1"
+http-client = "3.0"
